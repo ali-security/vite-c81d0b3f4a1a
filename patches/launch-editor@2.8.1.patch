@@ -1,5 +1,5 @@
 diff --git a/index.js b/index.js
-index 55e731607a43e51b09d5d7656d8e2b9761afad68..99605aa0888bbbb78d100824d53e0b846ccfd038 100644
+index 55e731607a43e51b09d5d7656d8e2b9761afad68..16d877484bd75522bff34b5f287f75b17051bc68 100644
 --- a/index.js
 +++ b/index.js
 @@ -48,7 +48,12 @@ function isTerminalEditor (editor) {
@@ -16,7 +16,7 @@ index 55e731607a43e51b09d5d7656d8e2b9761afad68..99605aa0888bbbb78d100824d53e0b84
    const match = file.match(positionRE)
    const lineNumber = match && match[1]
    const columnNumber = match && match[3]
-@@ -66,22 +66,52 @@ function launchEditor (file, specifiedEditor, onErrorCallback) {
+@@ -66,34 +66,64 @@ function launchEditor (file, specifiedEditor, onErrorCallback) {
    let { fileName } = parsed
    const { lineNumber, columnNumber } = parsed
 
@@ -69,6 +69,19 @@ index 55e731607a43e51b09d5d7656d8e2b9761afad68..99605aa0888bbbb78d100824d53e0b84
 +
    if (
      process.platform === 'linux' &&
+     fileName.startsWith('/mnt/') &&
+     /Microsoft/i.test(os.release())
+   ) {
+     // Assume WSL / "Bash on Ubuntu on Windows" is being used, and
+     // that the file exists on the Windows file system.
+     // `os.release()` is "4.4.0-43-Microsoft" in the current release
+     // build of WSL, see: https://github.com/Microsoft/BashOnWindows/issues/423#issuecomment-221627364
+     // When a Windows editor is specified, interop functionality can
+     // handle the path translation, but only if a relative path is used.
+-    fileName = path.relative('', fileName)
++    fileName = `./${path.relative('', fileName)}`
+   }
+
 @@ -97,36 +97,6 @@ function launchEditor (file, specifiedEditor, onErrorCallback) {
      fileName = path.relative('', fileName)
    }

@@ -19,6 +19,7 @@ const launchEditor = _require(
 const childProcess = _require('node:child_process')
 const fs = _require('node:fs')
 const nodePath = _require('node:path')
+const os = _require('node:os')
 
 const originalPlatform = process.platform
 
@@ -56,13 +57,37 @@ function captureLaunch(platform: string, fn: () => void) {
   }
 }
 
-function openFile(platform: string, file: string) {
+function openFile(platform: string, file: string, editor = 'code') {
   const onError = vi.fn()
   const launched = captureLaunch(platform, () => {
-    launchEditor(file, 'code', onError)
+    launchEditor(file, editor, onError)
   })
   expect(onError).not.toHaveBeenCalled()
   return launched
+}
+
+const WSL_RELEASE = '4.4.0-43-Microsoft'
+const LINUX_RELEASE = '6.8.0-generic'
+
+// Calls `fn` with `cwd` as the working directory and `release` as the kernel
+// release (WSL is detected by a release such as `WSL_RELEASE`)
+function withCwd<T>(cwd: string, release: string, fn: () => T): T {
+  const processCwd = vi.spyOn(process, 'cwd').mockReturnValue(cwd)
+  const osRelease = vi.spyOn(os, 'release').mockReturnValue(release)
+  try {
+    return fn()
+  } finally {
+    processCwd.mockRestore()
+    osRelease.mockRestore()
+  }
+}
+
+// Opens `file` as if running in WSL and returns the editor arguments
+function openFileInWSL(cwd: string, file: string, editor = 'vim') {
+  const launch = () => openFile('linux', file, editor)
+  const { spawn } = withCwd(cwd, WSL_RELEASE, launch)
+  expect(spawn).toHaveLength(1)
+  return spawn[0][1]
 }
 
 // Minimal model of how cmd.exe parses a command line: returns the special
@@ -444,5 +469,84 @@ describe('launch-editor position suffix', () => {
     })
 
     expect(existsSync).toEqual([['']])
+  })
+})
+
+// Editors parse an argument starting with `+` or `-` as an option (e.g. Vim
+// runs `+cmd` as a command), so a file name must never be passed in that form,
+// not even after it is converted to a relative path for WSL
+const OPTION_LIKE_FILES = [
+  ['vim', '+call writefile(["marker"], "LAUNCH_EDITOR_MARKER")|qa!'],
+  ['mvim', '-ccall writefile(["marker"], "LAUNCH_EDITOR_MARKER")|qa!'],
+  ['gvim', '+call writefile(["marker"], "LAUNCH_EDITOR_MARKER")|qa!'],
+  ['emacs', '--eval=(write-region "marker" nil "LAUNCH_EDITOR_MARKER")'],
+  ['emacsclient', '-eatouch LAUNCH_EDITOR_MARKER'],
+  ['notepad++', '-pluginMessage=LAUNCH_EDITOR_MARKER'],
+]
+
+describe('launch-editor file names that look like editor options', () => {
+  test.each(OPTION_LIKE_FILES)('%s gets an absolute path', (editor, file) => {
+    const cwd = '/home/user/project'
+    for (const position of ['', ':10:5']) {
+      const launch = () => openFile('linux', file + position, editor)
+      const { spawn } = withCwd(cwd, LINUX_RELEASE, launch)
+
+      expect(spawn).toHaveLength(1)
+      const [, args] = spawn[0]
+      expect(args[args.length - 1]).toBe(`${cwd}/${file}`)
+    }
+  })
+})
+
+// In WSL, a file on a Windows drive is opened with a path relative to the
+// working directory. These tests are skipped on Windows, where the `path`
+// module used for that conversion is `path.win32`.
+describe.skipIf(originalPlatform === 'win32')('launch-editor in WSL', () => {
+  test('uses a relative path for a file on a Windows drive', () => {
+    const args = openFileInWSL('/home/user/project', '/mnt/c/project/file.js')
+    expect(args).toEqual(['./../../../mnt/c/project/file.js'])
+  })
+
+  test('resolves a relative path before converting it', () => {
+    expect(openFileInWSL('/mnt/c/project', 'file.js')).toEqual(['./file.js'])
+  })
+
+  test('prefixes an option-like relative path', () => {
+    const file = '+call system("touch LAUNCH_EDITOR_MARKER")'
+    expect(openFileInWSL('/mnt/c/project', file)).toEqual([`./${file}`])
+  })
+
+  test('prefixes an option-like relative path with a position', () => {
+    const file = '+call system("touch LAUNCH_EDITOR_MARKER")'
+    const args = openFileInWSL('/mnt/c/project', `${file}:10:5`)
+    expect(args).toEqual(['+call cursor(10, 5)', `./${file}`])
+  })
+
+  test.each(OPTION_LIKE_FILES)('%s gets a prefixed path', (editor, file) => {
+    for (const position of ['', ':10:5']) {
+      const args = openFileInWSL('/mnt/c/project', file + position, editor)
+      expect(args[args.length - 1]).toBe(`./${file}`)
+    }
+  })
+
+  test('prefixes an option-like path requested via /__open-in-editor', () => {
+    const file = '+call system("touch LAUNCH_EDITOR_MARKER")'
+    const req = { url: `/__open-in-editor?file=${encodeURIComponent(file)}` }
+    const res = { statusCode: 200, end: vi.fn() }
+    const { spawn } = withCwd('/mnt/c/project', WSL_RELEASE, () => {
+      // vite creates the middleware without `srcRoot`, which defaults to the
+      // working directory
+      const middleware = launchEditorMiddleware('vim')
+      return captureLaunch('linux', () => {
+        middleware(req, res)
+      })
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.end).toHaveBeenCalled()
+    expect(spawn).toHaveLength(1)
+    const [command, args] = spawn[0]
+    expect(command).toBe('vim')
+    expect(args).toEqual([`./${file}`])
   })
 })
