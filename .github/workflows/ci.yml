@@ -8,59 +8,28 @@ env:
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
   # Vitest auto retry on flaky segfault
   VITEST_SEGFAULT_RETRY: 3
+  # plain-text test summaries in the log (no ANSI escapes)
+  NO_COLOR: "1"
 
 # Remove default permissions of GITHUB_TOKEN for security
 # https://docs.github.com/en/actions/using-jobs/assigning-permissions-to-jobs
 permissions: {}
 
 on:
-  push:
-    branches:
-      - main
-      - release/*
-      - feat/*
-      - fix/*
-      - perf/*
-      - v1
-      - v2
-      - v2.*
-      - v3.*
-  pull_request:
   workflow_dispatch:
+    inputs:
+      test-filter:
+        description: "Space separated vitest filename filters. Empty runs the full suite."
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
-  changed:
-    name: Get changed files
-    runs-on: ubuntu-latest
-    outputs:
-      should_skip: ${{ steps.changed-files.outputs.only_changed == 'true' }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          # Assume PRs are less than 50 commits
-          fetch-depth: 50
-
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@e9772d140489982e0e3704fea5ee93d536f1e275 # v45.0.1
-        with:
-          files: |
-            docs/**
-            .github/**
-            !.github/workflows/ci.yml
-            packages/create-vite/template**
-            **.md
-
   test:
-    needs: changed
-    if: needs.changed.outputs.should_skip != 'true'
-    timeout-minutes: 20
+    timeout-minutes: 45
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -89,7 +58,9 @@ jobs:
           cache: "pnpm"
 
       - name: Install deps
-        run: pnpm install
+        # sealed patches can't carry pnpm-lock.yaml edits; let pnpm record
+        # the patch hashes of `pnpm.patchedDependencies` in the lockfile
+        run: pnpm install --no-frozen-lockfile
 
       # Install playwright's binary under custom directory to cache
       - name: (non-windows) Set Playwright path and Get playwright version
@@ -121,16 +92,31 @@ jobs:
         run: pnpm run build
 
       - name: Test unit
-        run: pnpm run test-unit
+        run: pnpm run test-unit ${{ inputs.test-filter }}
 
       - name: Test serve
-        run: pnpm run test-serve
+        run: pnpm run test-serve ${{ inputs.test-filter }}
 
       - name: Test build
-        run: pnpm run test-build
+        run: pnpm run test-build ${{ inputs.test-filter }}
+
+      - name: Pack vite
+        if: matrix.os == 'ubuntu-latest' && matrix.node_version == 20
+        working-directory: packages/vite
+        env:
+          UV_THREADPOOL_SIZE: 1
+        run: pnpm pack
+
+      - name: Upload vite tarball
+        if: matrix.os == 'ubuntu-latest' && matrix.node_version == 20
+        uses: actions/upload-artifact@v4
+        with:
+          name: vite-tgz
+          path: packages/vite/vite-*.tgz
+          if-no-files-found: error
 
   lint:
-    timeout-minutes: 10
+    timeout-minutes: 25
     runs-on: ubuntu-latest
     name: "Lint: node-20, ubuntu-latest"
     steps:
@@ -146,7 +132,9 @@ jobs:
           cache: "pnpm"
 
       - name: Install deps
-        run: pnpm install
+        # sealed patches can't carry pnpm-lock.yaml edits; let pnpm record
+        # the patch hashes of `pnpm.patchedDependencies` in the lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build
         run: pnpm run build
