@@ -33,6 +33,10 @@ describe.runIf(isServe)('main', () => {
     expect(await page.textContent('.named')).toBe(testJSON.msg)
   })
 
+  test('virtual svg module', async () => {
+    expect(await page.textContent('.virtual-svg')).toMatch('<svg')
+  })
+
   test('safe fetch', async () => {
     expect(await page.textContent('.safe-fetch')).toMatch('KEY=safe')
     expect(await page.textContent('.safe-fetch-status')).toBe('200')
@@ -77,6 +81,16 @@ describe.runIf(isServe)('main', () => {
     expect(
       await page.textContent('.unsafe-fetch-raw-query-import-status'),
     ).toBe('403')
+  })
+
+  test('unsafe fetch ?.svg?import', async () => {
+    expect(
+      await page.textContent('.unsafe-fetch-query-dot-svg-import-status'),
+    ).toBe('403')
+  })
+
+  test('unsafe fetch .svg?import', async () => {
+    expect(await page.textContent('.unsafe-fetch-svg-status')).toBe('403')
   })
 
   test('safe fs fetch', async () => {
@@ -144,6 +158,14 @@ describe.runIf(isServe)('main', () => {
     ).toBe('403')
   })
 
+  test('unsafe fs fetch with relative path after query status', async () => {
+    expect(
+      await page.textContent(
+        '.unsafe-fs-fetch-relative-path-after-query-status',
+      ),
+    ).toBe('403')
+  })
+
   test('nested entry', async () => {
     expect(await page.textContent('.nested-entry')).toBe('foobar')
   })
@@ -156,6 +178,12 @@ describe.runIf(isServe)('main', () => {
     // It is 403 in case insensitive system, 404 in others
     const code = await page.textContent('.unsafe-dotEnV-casing')
     expect(code === '403' || code === '404').toBeTruthy()
+  })
+
+  test('denied env with ?.svg?.wasm?init', async () => {
+    expect(
+      await page.textContent('.unsafe-dotenv-query-dot-svg-wasm-init'),
+    ).toBe('403')
   })
 })
 

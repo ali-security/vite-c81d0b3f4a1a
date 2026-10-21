@@ -1,5 +1,6 @@
 import path from 'node:path'
 import fsp from 'node:fs/promises'
+import type { ServerResponse } from 'node:http'
 import type { Connect } from 'dep-types/connect'
 import colors from 'picocolors'
 import type { ExistingRawSourceMap } from 'rollup'
@@ -16,7 +17,11 @@ import {
   removeTimestampQuery,
 } from '../../utils'
 import { send } from '../send'
-import { ERR_LOAD_URL, transformRequest } from '../transformRequest'
+import {
+  ERR_DENIED_ID,
+  ERR_LOAD_URL,
+  transformRequest,
+} from '../transformRequest'
 import { applySourcemapIgnoreList } from '../sourcemap'
 import { isHTMLProxy } from '../../plugins/html'
 import { DEP_VERSION_RE, FS_PREFIX } from '../../constants'
@@ -45,6 +50,22 @@ const trailingQuerySeparatorsRE = /[?&]+$/
 const urlRE = /[?&]url\b/
 const rawRE = /[?&]raw\b/
 const inlineRE = /[?&]inline\b/
+const svgRE = /\.svg\b/
+
+function deniedServingAccessForTransform(
+  url: string,
+  server: ViteDevServer,
+  res: ServerResponse,
+  next: Connect.NextFunction,
+) {
+  return (
+    (rawRE.test(url) ||
+      urlRE.test(url) ||
+      inlineRE.test(url) ||
+      svgRE.test(url)) &&
+    !ensureServingAccess(url, server, res, next)
+  )
+}
 
 /**
  * A middleware that short-circuits the middleware chain to serve cached transformed modules
@@ -172,10 +193,8 @@ export function transformMiddleware(
         '',
       )
       if (
-        (rawRE.test(urlWithoutTrailingQuerySeparators) ||
-          urlRE.test(urlWithoutTrailingQuerySeparators) ||
-          inlineRE.test(urlWithoutTrailingQuerySeparators)) &&
-        !ensureServingAccess(
+        !url.startsWith('/@id/\0') &&
+        deniedServingAccessForTransform(
           urlWithoutTrailingQuerySeparators,
           server,
           res,
@@ -224,6 +243,12 @@ export function transformMiddleware(
         // resolve, load and transform using the plugin container
         const result = await transformRequest(url, server, {
           html: req.headers.accept?.includes('text/html'),
+          allowId(id) {
+            return (
+              id.startsWith('\0') ||
+              !deniedServingAccessForTransform(id, server, res, next)
+            )
+          },
         })
         if (result) {
           const depsOptimizer = getDepsOptimizer(server.config, false) // non-ssr
@@ -293,6 +318,10 @@ export function transformMiddleware(
       if (e?.code === ERR_LOAD_URL) {
         // Let other middleware handle if we can't load the url via transformRequest
         return next()
+      }
+      if (e?.code === ERR_DENIED_ID) {
+        // next() is called in ensureServingAccess
+        return
       }
       return next(e)
     }
