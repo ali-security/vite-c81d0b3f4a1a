@@ -64,6 +64,8 @@
 <pre class="unsafe-dotenv"></pre>
 <pre class="unsafe-dotEnV-casing"></pre>
 <pre class="unsafe-dotenv-query-dot-svg-wasm-init"></pre>
+<pre class="unsafe-dotenv-ntfs-ads"></pre>
+<pre class="unsafe-dotenv-83-short-name"></pre>
 
 <d2>Virtual SVG module</d2>
 <pre class="virtual-svg"></pre>
@@ -94,6 +96,8 @@
   text('.virtual-svg', fooSvg)
 
   const base = typeof BASE !== 'undefined' ? BASE : ''
+  const dotEnvWindows83ShortName =
+    typeof DOTENV83SHORTNAME !== 'undefined' ? DOTENV83SHORTNAME : undefined
 
   // inside allowed dir, safe fetch
   fetch(joinUrlSegments(base, '/src/safe.txt'))
@@ -451,6 +455,34 @@
   )
     .then((r) => {
       text('.unsafe-dotenv-query-dot-svg-wasm-init', r.status)
+    })
+    .catch((e) => {
+      console.error(e)
+    })
+
+  // .env with NTFS ADS suffix
+  fetch(
+    joinUrlSegments(
+      base,
+      joinUrlSegments('/@fs/', ROOT) + '/root/src/.env::$DATA',
+    ),
+  )
+    .then((r) => {
+      text('.unsafe-dotenv-ntfs-ads', r.status)
+    })
+    .catch((e) => {
+      console.error(e)
+    })
+
+  // .env with 8.3 short name
+  fetch(
+    joinUrlSegments(
+      base,
+      joinUrlSegments('/@fs/', ROOT) + `/root/src/${dotEnvWindows83ShortName}`,
+    ),
+  )
+    .then((r) => {
+      text('.unsafe-dotenv-83-short-name', r.status)
     })
     .catch((e) => {
       console.error(e)
