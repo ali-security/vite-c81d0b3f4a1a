@@ -1,5 +1,5 @@
 diff --git a/index.js b/index.js
-index 55e731607a43e51b09d5d7656d8e2b9761afad68..2b2e6fbb0962d33849df6f6a5e2f5c5aeb9a15d9 100644
+index 55e731607a43e51b09d5d7656d8e2b9761afad68..99605aa0888bbbb78d100824d53e0b846ccfd038 100644
 --- a/index.js
 +++ b/index.js
 @@ -48,7 +48,12 @@ function isTerminalEditor (editor) {
@@ -16,7 +16,7 @@ index 55e731607a43e51b09d5d7656d8e2b9761afad68..2b2e6fbb0962d33849df6f6a5e2f5c5a
    const match = file.match(positionRE)
    const lineNumber = match && match[1]
    const columnNumber = match && match[3]
-@@ -66,6 +66,20 @@ function launchEditor (file, specifiedEditor, onErrorCallback) {
+@@ -66,22 +66,52 @@ function launchEditor (file, specifiedEditor, onErrorCallback) {
    let { fileName } = parsed
    const { lineNumber, columnNumber } = parsed
 
@@ -37,6 +37,38 @@ index 55e731607a43e51b09d5d7656d8e2b9761afad68..2b2e6fbb0962d33849df6f6a5e2f5c5a
    if (!fs.existsSync(fileName)) {
      return
    }
+
+   if (typeof specifiedEditor === 'function') {
+     onErrorCallback = specifiedEditor
+     specifiedEditor = undefined
+   }
+
+   onErrorCallback = wrapErrorCallback(onErrorCallback)
+
+   const [editor, ...args] = guessEditor(specifiedEditor)
+   if (!editor) {
+     onErrorCallback(fileName, null)
+     return
+   }
+
++  // CMD treats line breaks as command separators and expands expressions such
++  // as `%VAR%` / `%VAR:old=new%` before consuming caret escapes, so arguments
++  // containing these characters cannot be passed to the editor safely on
++  // Windows and are rejected (the position arguments only consist of digits).
++  if (process.platform === 'win32') {
++    const cmdArgs = args.concat(fileName)
++    if (cmdArgs.some((arg) => /[\r\n]/.test(arg))) {
++      onErrorCallback(fileName, 'Cannot launch an editor with an argument containing a line break')
++      return
++    }
++    if (cmdArgs.some((arg) => /%/.test(arg))) {
++      onErrorCallback(fileName, 'Cannot launch an editor with an argument containing "%"')
++      return
++    }
++  }
++
+   if (
+     process.platform === 'linux' &&
 @@ -97,36 +97,6 @@ function launchEditor (file, specifiedEditor, onErrorCallback) {
      fileName = path.relative('', fileName)
    }

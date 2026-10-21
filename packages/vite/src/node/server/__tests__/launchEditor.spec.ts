@@ -278,7 +278,85 @@ describe('launch-editor UNC paths on Windows', () => {
   })
 })
 
+const PERCENT_ERROR = /argument containing "%"/
+const LINE_BREAK_ERROR = /argument containing a line break/
+
+// CMD treats line breaks as command separators and expands `%VAR%` (and
+// `%VAR:old=new%`) before consuming `^` escapes, so an argument containing
+// them could run the value of an environment variable as a command
+describe('launch-editor CMD expansion on Windows', () => {
+  test.each([
+    ['a percent sign', 'C:\\project\\100%\\file.js', PERCENT_ERROR],
+    ['a variable', 'C:\\project\\%COMSPEC%.js', PERCENT_ERROR],
+    ['a variable modifier', 'C:\\project\\%VAR:old=new%', PERCENT_ERROR],
+    ['a carriage return', 'C:\\project\\a.js\rcalc.exe', LINE_BREAK_ERROR],
+    ['a line feed', 'C:\\project\\a.js\ncalc.exe', LINE_BREAK_ERROR],
+  ])('rejects %s in the file name', (_, file, error) => {
+    const onError = vi.fn()
+    const { exec, spawn } = captureLaunch('win32', () => {
+      launchEditor(file, 'code', onError)
+    })
+
+    expect(exec).toHaveLength(0)
+    expect(spawn).toHaveLength(0)
+    expect(onError).toHaveBeenCalledTimes(1)
+    const [fileName, message] = onError.mock.calls[0]
+    expect(fileName).toBe(nodePath.win32.resolve(file))
+    expect(message).toMatch(error)
+  })
+
+  test('rejects a percent sign when line and column are given', () => {
+    const onError = vi.fn()
+    const { exec, spawn } = captureLaunch('win32', () => {
+      launchEditor('C:\\project\\%COMSPEC%.js:10:5', 'code', onError)
+    })
+
+    expect(exec).toHaveLength(0)
+    expect(spawn).toHaveLength(0)
+    expect(onError).toHaveBeenCalledTimes(1)
+    const [fileName, message] = onError.mock.calls[0]
+    expect(fileName).toBe('C:\\project\\%COMSPEC%.js')
+    expect(message).toMatch(PERCENT_ERROR)
+  })
+
+  test('rejects a percent sign in the editor arguments', () => {
+    const onError = vi.fn()
+    const { exec, spawn } = captureLaunch('win32', () => {
+      launchEditor('C:\\project\\a.js', 'code --profile %VAR%', onError)
+    })
+
+    expect(exec).toHaveLength(0)
+    expect(spawn).toHaveLength(0)
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError.mock.calls[0][1]).toMatch(PERCENT_ERROR)
+  })
+
+  test('rejects a percent sign requested via /__open-in-editor', () => {
+    // vite uses the middleware without an error callback
+    const middleware = launchEditorMiddleware('code', path.resolve('/project'))
+    const req = { url: '/__open-in-editor?file=%25COMSPEC%25.js' }
+    const res = { statusCode: 200, end: vi.fn() }
+    const { exec, spawn } = captureLaunch('win32', () => {
+      middleware(req, res)
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.end).toHaveBeenCalled()
+    expect(exec).toHaveLength(0)
+    expect(spawn).toHaveLength(0)
+  })
+})
+
 describe('launch-editor on other platforms', () => {
+  test('does not apply the Windows CMD checks', () => {
+    const { exec, spawn } = openFile('linux', '/foo/100%/%VAR%.js')
+
+    expect(exec).toHaveLength(0)
+    expect(spawn).toHaveLength(1)
+    const [, args] = spawn[0]
+    expect(args).toEqual(['/foo/100%/%VAR%.js'])
+  })
+
   test('spawns the editor without a shell', () => {
     const { exec, spawn } = openFile('linux', '/foo/a&calc.js')
 
