@@ -1,0 +1,1 @@
+secret sibling file outside the served directory
