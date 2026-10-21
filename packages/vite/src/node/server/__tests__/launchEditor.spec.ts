@@ -90,13 +90,13 @@ function findUnescapedCmdMetachars(command: string): string[] {
 
 describe('launch-editor on Windows', () => {
   test.each([
-    ['C:/foo/a&calc.js', 'code ^"C:/foo/a^&calc.js^"'],
-    ['C:/foo/a&&calc.js', 'code ^"C:/foo/a^&^&calc.js^"'],
-    ['C:/foo/a|calc.js', 'code ^"C:/foo/a^|calc.js^"'],
-    ['C:/foo/a>out.js', 'code ^"C:/foo/a^>out.js^"'],
-    ['C:/foo/a<in.js', 'code ^"C:/foo/a^<in.js^"'],
-    ['C:/foo/a^b.js', 'code ^"C:/foo/a^^b.js^"'],
-    ['C:/foo/a,b;c=d.js', 'code ^"C:/foo/a^,b^;c^=d.js^"'],
+    ['C:\\foo\\a&calc.js', 'code ^"C:\\foo\\a^&calc.js^"'],
+    ['C:\\foo\\a&&calc.js', 'code ^"C:\\foo\\a^&^&calc.js^"'],
+    ['C:\\foo\\a|calc.js', 'code ^"C:\\foo\\a^|calc.js^"'],
+    ['C:\\foo\\a>out.js', 'code ^"C:\\foo\\a^>out.js^"'],
+    ['C:\\foo\\a<in.js', 'code ^"C:\\foo\\a^<in.js^"'],
+    ['C:\\foo\\a^b.js', 'code ^"C:\\foo\\a^^b.js^"'],
+    ['C:\\foo\\a,b;c=d.js', 'code ^"C:\\foo\\a^,b^;c^=d.js^"'],
     [
       'C:\\Users\\myusername\\Downloads\\& curl 172.21.93.52',
       'code ^"C:\\Users\\myusername\\Downloads\\^& curl 172.21.93.52^"',
@@ -117,26 +117,26 @@ describe('launch-editor on Windows', () => {
   })
 
   test('escapes special characters when line and column are given', () => {
-    const { exec, spawn } = openFile('win32', 'C:/foo/a&calc.js:10:5')
+    const { exec, spawn } = openFile('win32', 'C:\\foo\\a&calc.js:10:5')
 
     expect(spawn).toHaveLength(0)
     expect(exec).toHaveLength(1)
     const [command] = exec[0]
-    expect(command).toBe('code -r -g ^"C:/foo/a^&calc.js:10:5^"')
+    expect(command).toBe('code -r -g ^"C:\\foo\\a^&calc.js:10:5^"')
     expect(findUnescapedCmdMetachars(command)).toEqual([])
   })
 
   test.each([
-    ['C:/foo/src/main.ts', 'code C:/foo/src/main.ts'],
-    ['C:/my project/src/main.ts', 'code "C:/my project/src/main.ts"'],
+    ['C:\\foo\\src\\main.ts', 'code C:\\foo\\src\\main.ts'],
+    ['C:\\my project\\src\\main.ts', 'code "C:\\my project\\src\\main.ts"'],
     [
-      'C:/foo/src/routes/[slug]/+page.svelte',
-      'code C:/foo/src/routes/[slug]/+page.svelte',
+      'C:\\foo\\src\\routes\\[slug]\\+page.svelte',
+      'code C:\\foo\\src\\routes\\[slug]\\+page.svelte',
     ],
-    ['C:/foo/app/routes/$id.tsx', 'code C:/foo/app/routes/$id.tsx'],
+    ['C:\\foo\\app\\routes\\$id.tsx', 'code C:\\foo\\app\\routes\\$id.tsx'],
     [
-      'C:/foo/src/app/(group)/@modal/page.ts',
-      'code C:/foo/src/app/(group)/@modal/page.ts',
+      'C:\\foo\\src\\app\\(group)\\@modal\\page.ts',
+      'code C:\\foo\\src\\app\\(group)\\@modal\\page.ts',
     ],
   ])('opens %s', (file, expected) => {
     const { exec, spawn } = openFile('win32', file)
@@ -193,7 +193,7 @@ describe('launch-editor UNC paths on Windows', () => {
     expect(spawn).toHaveLength(0)
     expect(onError).toHaveBeenCalledTimes(1)
     const [fileName, message] = onError.mock.calls[0]
-    expect(fileName).toBe(file)
+    expect(fileName).toBe(nodePath.win32.resolve(file))
     expect(message).toContain(UNC_ERROR)
   })
 
@@ -272,7 +272,7 @@ describe('launch-editor UNC paths on Windows', () => {
   ])('still opens %s', (file) => {
     const { exec, spawn, existsSync } = openFile('win32', file)
 
-    expect(existsSync).toEqual([[file]])
+    expect(existsSync).toEqual([[nodePath.win32.resolve(file)]])
     expect(spawn).toHaveLength(0)
     expect(exec).toHaveLength(1)
   })
@@ -297,10 +297,74 @@ describe('launch-editor on other platforms', () => {
   ])('does not apply the Windows UNC path check to %s', (file) => {
     const { exec, spawn, existsSync } = openFile('linux', file)
 
-    expect(existsSync).toEqual([[file]])
+    const fileName = nodePath.posix.resolve(file)
+    expect(existsSync).toEqual([[fileName]])
     expect(exec).toHaveLength(0)
     expect(spawn).toHaveLength(1)
     const [, args] = spawn[0]
-    expect(args).toEqual([file])
+    expect(args).toEqual([fileName])
+  })
+})
+
+// The position suffix must be removed before the file name is resolved,
+// otherwise `dir/..:1:1` passes the existence check as `dir/..` (an existing
+// parent directory) while a different, attacker-controlled path is opened
+describe('launch-editor position suffix', () => {
+  test('resolves `..` left by the position suffix on Windows', () => {
+    const file = 'C:\\project\\attacker-controlled\\..:1:1'
+    const { exec, spawn, existsSync } = openFile('win32', file)
+
+    expect(existsSync).toEqual([['C:\\project']])
+    expect(spawn).toHaveLength(0)
+    expect(exec).toHaveLength(1)
+    const [command] = exec[0]
+    expect(command).toBe('code -r -g C:\\project:1:1')
+  })
+
+  test('resolves `..` left by the position suffix on other platforms', () => {
+    const file = '/project/attacker-controlled/..:1:1'
+    const { exec, spawn, existsSync } = openFile('linux', file)
+
+    expect(existsSync).toEqual([['/project']])
+    expect(exec).toHaveLength(0)
+    expect(spawn).toHaveLength(1)
+    const [, args] = spawn[0]
+    expect(args).toEqual(['-r', '-g', '/project:1:1'])
+  })
+
+  test('resolves `..` requested via /__open-in-editor', () => {
+    const middleware = launchEditorMiddleware('code', 'C:\\project')
+    const file = encodeURIComponent('attacker-controlled\\..:1:1')
+    const req = { url: `/__open-in-editor?file=${file}` }
+    const res = { statusCode: 200, end: vi.fn() }
+    // The middleware resolves the file with `path.resolve`, which treats
+    // `..:1:1` as a regular segment name on Windows
+    const win32Resolve = nodePath.win32.resolve
+    const { exec, spawn, existsSync } = captureLaunch('win32', () => {
+      const resolve = vi
+        .spyOn(nodePath, 'resolve')
+        .mockImplementation(win32Resolve)
+      try {
+        middleware(req, res)
+      } finally {
+        resolve.mockRestore()
+      }
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.end).toHaveBeenCalled()
+    expect(existsSync).toEqual([['C:\\project']])
+    expect(spawn).toHaveLength(0)
+    expect(exec).toHaveLength(1)
+    const [command] = exec[0]
+    expect(command).toBe('code -r -g C:\\project:1:1')
+  })
+
+  test.each(['win32', 'linux'])('keeps an empty name on %s', (platform) => {
+    const { existsSync } = captureLaunch(platform, () => {
+      launchEditor(':1:1', 'code', vi.fn())
+    })
+
+    expect(existsSync).toEqual([['']])
   })
 })

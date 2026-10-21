@@ -1,7 +1,21 @@
 diff --git a/index.js b/index.js
-index 55e731607a43e51b09d5d7656d8e2b9761afad68..ce80fae0dae4e328644880de3fb22dd23ebb4af3 100644
+index 55e731607a43e51b09d5d7656d8e2b9761afad68..2b2e6fbb0962d33849df6f6a5e2f5c5aeb9a15d9 100644
 --- a/index.js
 +++ b/index.js
+@@ -48,7 +48,12 @@ function isTerminalEditor (editor) {
+ 
+ const positionRE = /:(\d+)(:(\d+))?$/
+ function parseFile (file) {
+-  const fileName = file.replace(positionRE, '')
++  const unresolvedFileName = file.replace(positionRE, '')
++  // Resolve only after the position suffix is removed, so that the path checked
++  // with `fs.existsSync` is the same one that is opened in the editor
++  // (`path.win32` / `path.posix` is `path` on the respective platform)
++  const pathModule = process.platform === 'win32' ? path.win32 : path.posix
++  const fileName = unresolvedFileName ? pathModule.resolve(unresolvedFileName) : ''
+   const match = file.match(positionRE)
+   const lineNumber = match && match[1]
+   const columnNumber = match && match[3]
 @@ -66,6 +66,20 @@ function launchEditor (file, specifiedEditor, onErrorCallback) {
    let { fileName } = parsed
    const { lineNumber, columnNumber } = parsed
