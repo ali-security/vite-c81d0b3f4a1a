@@ -70,9 +70,13 @@
 <d2>Virtual SVG module</d2>
 <pre class="virtual-svg"></pre>
 
+<h2>Safe Module Path Access Isolation</h2>
+<pre class="safe-module-path-status"></pre>
+
 <script type="module">
   import '../../entry'
   import json, { msg } from '../../safe.json'
+  import 'virtual:safe-module-path-confusion'
   import './code.js'
 
   // Check virtual svg module still works
@@ -98,6 +102,14 @@
   const base = typeof BASE !== 'undefined' ? BASE : ''
   const dotEnvWindows83ShortName =
     typeof DOTENV83SHORTNAME !== 'undefined' ? DOTENV83SHORTNAME : undefined
+
+  // a plugin-resolved module id must not mark an unrelated host file as safe
+  if (import.meta.env.DEV) {
+    const unsafeUrl = joinUrlSegments('/@fs/', ROOT) + '/root/unsafe.txt'
+    fetch(joinUrlSegments(base, unsafeUrl)).then((r) => {
+      text('.safe-module-path-status', r.status)
+    })
+  }
 
   // inside allowed dir, safe fetch
   fetch(joinUrlSegments(base, '/src/safe.txt'))

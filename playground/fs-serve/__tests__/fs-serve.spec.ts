@@ -224,6 +224,12 @@ describe.runIf(isServe)('main', () => {
         .toBe('403')
     },
   )
+
+  test('keeps root-relative module URLs separate from absolute filesystem paths', async () => {
+    await expect
+      .poll(() => page.textContent('.safe-module-path-status'))
+      .toBe('403')
+  })
 })
 
 describe('fetch', () => {
