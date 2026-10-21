@@ -18,6 +18,7 @@ const launchEditor = _require(
 // so stubbing their properties is visible to it
 const childProcess = _require('node:child_process')
 const fs = _require('node:fs')
+const nodePath = _require('node:path')
 
 const originalPlatform = process.platform
 
@@ -45,6 +46,7 @@ function captureLaunch(platform: string, fn: () => void) {
     return {
       exec: [...exec.mock.calls],
       spawn: [...spawn.mock.calls],
+      existsSync: [...existsSync.mock.calls],
     }
   } finally {
     setPlatform(originalPlatform)
@@ -166,6 +168,116 @@ describe('launch-editor on Windows', () => {
   })
 })
 
+const UNC_ERROR =
+  'UNC paths are not supported on Windows to avoid security issues.'
+
+// Accessing a UNC path makes Windows send the user's NTLMv2 hash to the remote
+// host, so it must be rejected before the file system is touched
+describe('launch-editor UNC paths on Windows', () => {
+  test.each([
+    '\\\\server\\share\\file.js',
+    '\\\\127.0.0.1\\share\\test.txt',
+    '//server/share/file.js',
+    '\\\\server/share/file.js',
+    '/\\server\\share\\file.js',
+    '\\\\?\\UNC\\server\\share\\file.js',
+    '\\\\.\\UNC\\server\\share\\file.js',
+  ])('rejects %s without accessing it', (file) => {
+    const onError = vi.fn()
+    const { exec, spawn, existsSync } = captureLaunch('win32', () => {
+      launchEditor(file, 'code', onError)
+    })
+
+    expect(existsSync).toHaveLength(0)
+    expect(exec).toHaveLength(0)
+    expect(spawn).toHaveLength(0)
+    expect(onError).toHaveBeenCalledTimes(1)
+    const [fileName, message] = onError.mock.calls[0]
+    expect(fileName).toBe(file)
+    expect(message).toContain(UNC_ERROR)
+  })
+
+  test('strips the position suffix before reporting the rejected UNC path', () => {
+    const onError = vi.fn()
+    const { exec, spawn, existsSync } = captureLaunch('win32', () => {
+      launchEditor('\\\\server\\share\\file.js:10:5', 'code', onError)
+    })
+
+    expect(existsSync).toHaveLength(0)
+    expect(exec).toHaveLength(0)
+    expect(spawn).toHaveLength(0)
+    expect(onError).toHaveBeenCalledTimes(1)
+    const [fileName, message] = onError.mock.calls[0]
+    expect(fileName).toBe('\\\\server\\share\\file.js')
+    expect(message).toContain(UNC_ERROR)
+  })
+
+  test('reports to the error callback passed as the second argument', () => {
+    const onError = vi.fn()
+    const { exec, spawn, existsSync } = captureLaunch('win32', () => {
+      launchEditor('\\\\server\\share\\file.js', onError)
+    })
+
+    expect(existsSync).toHaveLength(0)
+    expect(exec).toHaveLength(0)
+    expect(spawn).toHaveLength(0)
+    expect(onError).toHaveBeenCalledTimes(1)
+    const [fileName, message] = onError.mock.calls[0]
+    expect(fileName).toBe('\\\\server\\share\\file.js')
+    expect(message).toContain(UNC_ERROR)
+  })
+
+  test('rejects without an error callback', () => {
+    const { exec, spawn, existsSync } = captureLaunch('win32', () => {
+      launchEditor('\\\\server\\share\\file.js', 'code')
+    })
+
+    expect(existsSync).toHaveLength(0)
+    expect(exec).toHaveLength(0)
+    expect(spawn).toHaveLength(0)
+  })
+
+  test('rejects a UNC path requested via /__open-in-editor', () => {
+    // vite uses the middleware without an error callback
+    const middleware = launchEditorMiddleware('code', path.resolve('/project'))
+    const req = {
+      url: '/__open-in-editor?file=%5c%5c127.0.0.1%5cshare%5ctest.txt',
+    }
+    const res = { statusCode: 200, end: vi.fn() }
+    // The middleware resolves the file with `path.resolve`, which keeps a UNC
+    // path as is on Windows
+    const win32Resolve = nodePath.win32.resolve
+    const { exec, spawn, existsSync } = captureLaunch('win32', () => {
+      const resolve = vi
+        .spyOn(nodePath, 'resolve')
+        .mockImplementation(win32Resolve)
+      try {
+        middleware(req, res)
+      } finally {
+        resolve.mockRestore()
+      }
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.end).toHaveBeenCalled()
+    expect(existsSync).toHaveLength(0)
+    expect(exec).toHaveLength(0)
+    expect(spawn).toHaveLength(0)
+  })
+
+  test.each([
+    'C:\\Users\\me\\project\\src\\main.ts',
+    'C:/Users/me/project/src/main.ts',
+    'src\\main.ts',
+  ])('still opens %s', (file) => {
+    const { exec, spawn, existsSync } = openFile('win32', file)
+
+    expect(existsSync).toEqual([[file]])
+    expect(spawn).toHaveLength(0)
+    expect(exec).toHaveLength(1)
+  })
+})
+
 describe('launch-editor on other platforms', () => {
   test('spawns the editor without a shell', () => {
     const { exec, spawn } = openFile('linux', '/foo/a&calc.js')
@@ -176,5 +288,19 @@ describe('launch-editor on other platforms', () => {
     expect(command).toBe('code')
     expect(args).toEqual(['/foo/a&calc.js'])
     expect(options).toEqual({ stdio: 'inherit' })
+  })
+
+  test.each([
+    '\\\\server\\share\\file.js',
+    '//server/share/file.js',
+    '\\\\?\\UNC\\server\\share\\file.js',
+  ])('does not apply the Windows UNC path check to %s', (file) => {
+    const { exec, spawn, existsSync } = openFile('linux', file)
+
+    expect(existsSync).toEqual([[file]])
+    expect(exec).toHaveLength(0)
+    expect(spawn).toHaveLength(1)
+    const [, args] = spawn[0]
+    expect(args).toEqual([file])
   })
 })

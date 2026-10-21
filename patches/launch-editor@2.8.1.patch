@@ -1,7 +1,28 @@
 diff --git a/index.js b/index.js
-index 55e731607a43e51b09d5d7656d8e2b9761afad68..9e8d007a5f782c1148c40f51dba5f0346eccef1f 100644
+index 55e731607a43e51b09d5d7656d8e2b9761afad68..ce80fae0dae4e328644880de3fb22dd23ebb4af3 100644
 --- a/index.js
 +++ b/index.js
+@@ -66,6 +66,20 @@ function launchEditor (file, specifiedEditor, onErrorCallback) {
+   let { fileName } = parsed
+   const { lineNumber, columnNumber } = parsed
+
++  // Accessing a UNC path (e.g. `\\attacker-host\share\file.js`) makes Windows
++  // attempt NTLM authentication against that host, disclosing the NTLMv2 hash.
++  // Reject them before touching the file system (`path.win32` is `path` on Windows).
++  if (process.platform === 'win32' && path.win32.resolve(fileName).startsWith('\\\\')) {
++    // The error callback has not been normalized yet at this point
++    const errorCallback = typeof specifiedEditor === 'function' ? specifiedEditor : onErrorCallback
++    wrapErrorCallback(errorCallback)(
++      fileName,
++      'UNC paths are not supported on Windows to avoid security issues. ' +
++        'See https://github.com/vitejs/launch-editor/tree/main/packages/launch-editor#unc-paths-on-windows for details.'
++    )
++    return
++  }
++
+   if (!fs.existsSync(fileName)) {
+     return
+   }
 @@ -97,36 +97,6 @@ function launchEditor (file, specifiedEditor, onErrorCallback) {
      fileName = path.relative('', fileName)
    }
